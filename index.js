@@ -4,7 +4,7 @@ require('dotenv').config(); // Cargar las variables de entorno
 
 
 // Construir la URI de conexión a MongoDB Atlas
-const dbURI = `mongodb+srv://${process.env.DBUSER}:${process.env.DBPASS}@cluster0.6ztjp.mongodb.net/${process.env.DBNAME}?retryWrites=true&w=majority&appName=Cluster0`;
+const dbURI = process.env.MONGODB_URI;
 
 // Conectar a MongoDB Atlas
 mongoose.connect(dbURI)

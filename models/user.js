@@ -16,6 +16,10 @@ const UserSchema = new mongoose.Schema({
         type: String,
         required: true
     },
+    productos: [{
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Producto'
+    }],
     carrito: [{
        product:{type: mongoose.Schema.Types.ObjectId, ref: 'Producto'} 
     }]

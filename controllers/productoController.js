@@ -1,18 +1,20 @@
-const Producto = require('../models/producto.js'); 
-const User = require('../models/user.js')
+const Producto = require('../models/producto.js');
+const User = require('../models/user.js');
 const fs = require('fs');
 const cloudinary = require('../middlewares/cloudinary.js');
-const { log } = require('console');
 
-
-// Controlador para obtener productos con filtros de categoría y precio
+// Controlador para obtener productos con filtros de categoria, precio y usuario
 const obtenerProductos = async (req, res) => {
     try {
-        const { categoria, precioMin, precioMax } = req.query;
-        let filtros = {};
+        const { categoria, precioMin, precioMax, usuarioId } = req.query;
+        const filtros = {};
 
         if (categoria) {
             filtros.categoria = categoria;
+        }
+
+        if (usuarioId) {
+            filtros.usuario = usuarioId;
         }
 
         if (precioMin || precioMax) {
@@ -21,10 +23,7 @@ const obtenerProductos = async (req, res) => {
             if (precioMax) filtros.precio.$lte = parseFloat(precioMax);
         }
 
-        // Buscar productos que coincidan con los filtros
-        const productos = await Producto.find(filtros);
-
-        // Responder con la lista de productos filtrados
+        const productos = await Producto.find(filtros).populate('usuario', 'userName email');
         res.status(200).json(productos);
     } catch (error) {
         console.error(error);
@@ -33,106 +32,145 @@ const obtenerProductos = async (req, res) => {
 };
 
 const obtenerProducto = async (req, res) => {
-    const id = req.params.id
+    const id = req.params.id;
     try {
-        const producto = await Producto.findById(id)
-        res.status(200).json(producto)
+        const producto = await Producto.findById(id).populate('usuario', 'userName email');
+        res.status(200).json(producto);
     } catch (error) {
-        console.error(error); 
+        console.error(error);
         res.status(500).json({ message: "Error obteniendo productos" });
     }
-}
+};
 
 // Controlador para crear un producto
 const crearProducto = async (req, res) => {
-    const {nombre, categoria, descripcion, precio, stock } = req.body;
+    const { nombre, categoria, descripcion, precio, stock } = req.body;
 
     try {
-        let imagenes = [];
+        if (!req.user?.id) {
+            return res.status(401).json({ message: "Usuario no autorizado" });
+        }
 
-        // Verificar si hay archivos adjuntos
-        if (req.files && req.files.length > 0) {
-            // Subir cada imagen a Cloudinary
-            for (let i = 0; i < req.files.length; i++) {
+        const usuario = await User.findById(req.user.id);
+        if (!usuario) {
+            return res.status(404).json({ message: "Usuario no encontrado" });
+        }
+
+        const imagenes = [];
+        const archivos = req.files || [];
+
+        if (archivos.length > 0) {
+            for (let i = 0; i < archivos.length; i++) {
                 try {
-                    const result = await cloudinary.uploader.upload(req.files[i].path, {folder: 'productos_tienda'});
-                    imagenes.push(result.public_id); // Guardar la URL segura de la imagen subida a Cloudinary
+                    const result = await cloudinary.uploader.upload(archivos[i].path, { folder: 'productos_tienda' });
+                    imagenes.push(result.public_id);
                 } catch (uploadError) {
                     console.error(`Error subiendo imagen ${i + 1}:`, uploadError);
-                    return res.status(500).json({ message: "Error subiendo imágenes" });
+                    return res.status(500).json({ message: "Error subiendo imagenes" });
                 }
             }
         }
 
-        // Crear el nuevo producto con las URLs de las imágenes
         const nuevoProducto = new Producto({
             nombre,
+            usuario: usuario._id,
             precio,
             categoria,
             stock,
             descripcion,
-            imagenes, // Guardar las URLs de las imágenes en el campo 'imagenes'
+            imagenes,
         });
-        for(let i = 0; i < req.files.length; i++ ){
-            fs.unlinkSync(req.files[i].path);
+
+        for (let i = 0; i < archivos.length; i++) {
+            fs.unlinkSync(archivos[i].path);
         }
-        await nuevoProducto.save(); // Guardar el producto en la base de datos
-        console.log("producto creado")
-        res.status(201).json({ message: "Producto creado", producto: nuevoProducto });
+
+        await nuevoProducto.save();
+        usuario.productos.push(nuevoProducto._id);
+        await usuario.save();
+
+        const productoCreado = await Producto.findById(nuevoProducto._id).populate('usuario', 'userName email');
+
+        res.status(201).json({ message: "Producto creado", producto: productoCreado });
     } catch (error) {
         console.error("Error de base de datos:", error);
         res.status(500).json({ message: "Error creando producto" });
     }
 };
-// Controlador para actualizar un producto, incluyendo el campo 'carrito'
+
+// Controlador para actualizar un producto
 const actualizarProducto = async (req, res) => {
-    const { id } = req.params; // Obtenemos el ID del producto de los parámetros de la URL
+    const { id } = req.params;
     try {
-        const productoActualizado = await Producto.findByIdAndUpdate(id, req.body, { new: true, runValidators: true }); // Actualiza el producto
-        if (!productoActualizado) {
-            return res.status(404).json({ message: "Producto no encontrado" }); // Si no se encuentra el producto
+        const producto = await Producto.findById(id);
+        if (!producto) {
+            return res.status(404).json({ message: "Producto no encontrado" });
         }
-        res.status(200).json({ message: "Producto actualizado", producto: productoActualizado }); // Respuesta exitosa
+
+        if (!producto.usuario || producto.usuario.toString() !== req.user.id) {
+            return res.status(403).json({ message: "No tienes permisos para editar este producto" });
+        }
+
+        const datosActualizados = { ...req.body };
+        delete datosActualizados.usuario;
+
+        const productoActualizado = await Producto.findByIdAndUpdate(
+            id,
+            datosActualizados,
+            { new: true, runValidators: true }
+        ).populate('usuario', 'userName email');
+
+        res.status(200).json({ message: "Producto actualizado", producto: productoActualizado });
     } catch (error) {
-        console.error("Error de base de datos:", error); // Log para errores específicos
-        res.status(500).json({ message: "Error actualizando producto" }); // Respuesta de error
+        console.error("Error de base de datos:", error);
+        res.status(500).json({ message: "Error actualizando producto" });
     }
 };
 
 // Controlador para eliminar un producto
 const eliminarProducto = async (req, res) => {
-    const { id } = req.params; // Obtenemos el ID del producto de los parámetros de la URL
+    const { id } = req.params;
     try {
-        const productoEliminado = await Producto.findById(id); 
+        const productoEliminado = await Producto.findById(id);
         if (!productoEliminado) {
-            return res.status(404).json({ message: "Producto no encontrado" }); // Si no se encuentra el producto
+            return res.status(404).json({ message: "Producto no encontrado" });
         }
-    const imagenes = productoEliminado.imagenes; // Suponiendo que almacenas un array de `public_id`
 
-    if (imagenes && imagenes.length > 0) {
-      for (const publicId of imagenes) {
-        try {
-          await cloudinary.uploader.destroy(publicId); // Eliminar cada imagen por `public_id`
-          console.log(`Imagen con ID ${publicId} eliminada de Cloudinary`);
-        } catch (error) {
-          console.error(`Error al eliminar imagen con ID ${publicId}:`, error.message);
+        if (!productoEliminado.usuario || productoEliminado.usuario.toString() !== req.user.id) {
+            return res.status(403).json({ message: "No tienes permisos para eliminar este producto" });
         }
-      }
-    }   
-    await User.updateMany(
-        { "carrito.product": id },
-        { $pull: { carrito: { product: id } } }
-    );
-        await productoEliminado.deleteOne()
-        console.log("producto eliminado");
-        res.status(200).json({ message: "Producto eliminado", producto: productoEliminado }); // Respuesta exitosa
+
+        const imagenes = productoEliminado.imagenes;
+
+        if (imagenes && imagenes.length > 0) {
+            for (const publicId of imagenes) {
+                try {
+                    await cloudinary.uploader.destroy(publicId);
+                    console.log(`Imagen con ID ${publicId} eliminada de Cloudinary`);
+                } catch (error) {
+                    console.error(`Error al eliminar imagen con ID ${publicId}:`, error.message);
+                }
+            }
+        }
+
+        await User.updateMany(
+            { "carrito.product": id },
+            { $pull: { carrito: { product: id } } }
+        );
+
+        await User.findByIdAndUpdate(
+            productoEliminado.usuario,
+            { $pull: { productos: productoEliminado._id } }
+        );
+
+        await productoEliminado.deleteOne();
+
+        res.status(200).json({ message: "Producto eliminado", producto: productoEliminado });
     } catch (error) {
-        console.error("Error de base de datos:", error); // Log para errores específicos
-        res.status(500).json({ message: "Error eliminando producto" }); 
+        console.error("Error de base de datos:", error);
+        res.status(500).json({ message: "Error eliminando producto" });
     }
 };
-
-
 
 module.exports = {
     obtenerProductos,
@@ -141,10 +179,3 @@ module.exports = {
     actualizarProducto,
     eliminarProducto
 };
-
-
-
-
-
-
-
