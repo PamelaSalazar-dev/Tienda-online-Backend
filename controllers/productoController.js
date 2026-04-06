@@ -113,12 +113,70 @@ const actualizarProducto = async (req, res) => {
 
         const datosActualizados = { ...req.body };
         delete datosActualizados.usuario;
+        let imagenesAEliminar = [];
 
-        const productoActualizado = await Producto.findByIdAndUpdate(
-            id,
-            datosActualizados,
-            { new: true, runValidators: true }
-        ).populate('usuario', 'userName email');
+        if (req.body.imagenesAEliminar) {
+            try {
+                imagenesAEliminar = JSON.parse(req.body.imagenesAEliminar);
+            } catch (error) {
+                imagenesAEliminar = [];
+            }
+        }
+
+        if (!Array.isArray(imagenesAEliminar)) {
+            imagenesAEliminar = [];
+        }
+
+        if (imagenesAEliminar.length > 0) {
+            for (const publicId of imagenesAEliminar) {
+                if (producto.imagenes.includes(publicId)) {
+                    try {
+                        await cloudinary.uploader.destroy(publicId);
+                    } catch (error) {
+                        console.error(`Error al eliminar imagen con ID ${publicId}:`, error.message);
+                    }
+                }
+            }
+        }
+
+        let imagenesActualizadas = producto.imagenes.filter(
+            (imagen) => !imagenesAEliminar.includes(imagen)
+        );
+
+        const archivos = req.files || [];
+        const cupoDisponible = 5 - imagenesActualizadas.length;
+
+        if (archivos.length > cupoDisponible) {
+            for (const archivo of archivos) {
+                if (archivo?.path && fs.existsSync(archivo.path)) {
+                    fs.unlinkSync(archivo.path);
+                }
+            }
+            return res.status(400).json({ message: "Solo puedes tener hasta 5 imagenes por producto" });
+        }
+
+        if (archivos.length > 0) {
+            for (const archivo of archivos) {
+                try {
+                    const result = await cloudinary.uploader.upload(archivo.path, { folder: 'productos_tienda' });
+                    imagenesActualizadas.push(result.public_id);
+                } catch (uploadError) {
+                    console.error("Error subiendo nuevas imagenes:", uploadError);
+                    return res.status(500).json({ message: "Error subiendo imagenes" });
+                } finally {
+                    if (archivo?.path && fs.existsSync(archivo.path)) {
+                        fs.unlinkSync(archivo.path);
+                    }
+                }
+            }
+        }
+
+        datosActualizados.imagenes = imagenesActualizadas;
+
+        const productoActualizado = await Producto.findByIdAndUpdate(id, datosActualizados, {
+            new: true,
+            runValidators: true
+        }).populate('usuario', 'userName email');
 
         res.status(200).json({ message: "Producto actualizado", producto: productoActualizado });
     } catch (error) {

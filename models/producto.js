@@ -4,6 +4,7 @@ const ProductoSchema = new mongoose.Schema({
     nombre: {
         type: String,
         required: true,
+        maxlength: 60,
     },
     usuario: {
         type: mongoose.Schema.Types.ObjectId,
@@ -18,7 +19,8 @@ const ProductoSchema = new mongoose.Schema({
     },
     descripcion: {
         type: String,
-        required: true
+        required: true,
+        maxlength: 300,
     },
     stock: {
         type: Number,
