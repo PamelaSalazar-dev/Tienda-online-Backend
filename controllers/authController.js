@@ -5,6 +5,13 @@ const { loginSchema } = require('../schemas/auth.schema.js');
 const jwt = require('jsonwebtoken');
 require('dotenv').config();
 const CreateAccesToken = require('../libs/jwt.js');
+const isProduction = process.env.NODE_ENV === 'production';
+const cookieOptions = {
+    httpOnly: true,
+    sameSite: isProduction ? 'none' : 'lax',
+    secure: isProduction,
+    path: '/'
+};
 
 const formatearUsuario = (user) => ({
     id: user._id,
@@ -40,7 +47,7 @@ const register = async (req, res)=>{
         });
      const userSaved = await newUser.save();
      const token = await CreateAccesToken({id: userSaved._id});
-     res.cookie("token", token);
+     res.cookie("token", token, cookieOptions);
      res.status(201).json({message: "usuario creado"});
     } catch (error) {
         res.status(500).json({ message: error.message });
@@ -59,7 +66,7 @@ const login = async (req, res)=>{
        if(!matchPassword) return res.status(400).json({message: "contrasena incorrecta"});
     
      const token = await CreateAccesToken({id: findUser._id});
-     res.cookie("token", token);
+     res.cookie("token", token, cookieOptions);
      res.status(200).json(formatearUsuario(findUser));
     } catch (error) {
         res.status(500).json({ message: error.message });
@@ -67,7 +74,10 @@ const login = async (req, res)=>{
 };
 
 const logout = (req, res) =>{
-  res.cookie('token', "", {expires: new Date(0)});
+  res.cookie('token', "", {
+    ...cookieOptions,
+    expires: new Date(0)
+  });
   return res.status(200).json({message: "sesion cerrada"});
 };
 

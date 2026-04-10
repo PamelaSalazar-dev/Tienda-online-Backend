@@ -5,10 +5,19 @@ const productoRoutes = require('./routes/productoRoutes');
 const authRoutes = require('./routes/authRoutes.js');
 
 const app = express();
+const allowedOrigins = (process.env.FRONTEND_URLS || 'http://localhost:5173')
+  .split(',')
+  .map((origin) => origin.trim())
+  .filter(Boolean);
 
 // Configurar CORS antes de las rutas
 app.use(cors({
-  origin: 'http://localhost:5173', 
+  origin: (origin, callback) => {
+    if (!origin || allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    }
+    return callback(new Error('Origen no permitido por CORS'));
+  },
   credentials: true, 
 }));
 
